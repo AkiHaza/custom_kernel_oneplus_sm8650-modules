@@ -12,6 +12,7 @@
 #include "cam_debug_util.h"
 
 extern struct sync_device *sync_dev;
+void cam_sync_free_user_payload(struct sync_user_payload *payload);
 
 /**
  * struct cam_sync_check_for_dma_release -

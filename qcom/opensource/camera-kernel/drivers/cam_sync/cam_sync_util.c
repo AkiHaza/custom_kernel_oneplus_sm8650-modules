@@ -579,7 +579,7 @@ int cam_sync_deinit_object(struct sync_table_row *table, uint32_t idx,
 	list_for_each_entry_safe(upayload_info, temp_upayload,
 			&row->user_payload_list, list) {
 		list_del_init(&upayload_info->list);
-		kfree(upayload_info);
+		cam_sync_free_user_payload(upayload_info);
 	}
 
 	list_for_each_entry_safe(sync_cb, temp_cb,
@@ -733,7 +733,7 @@ void cam_sync_util_dispatch_signaled_cb(int32_t sync_obj,
 		 * sending V4L event will make a deep copy
 		 * anyway
 		 */
-		kfree(payload_info);
+		cam_sync_free_user_payload(payload_info);
 	}
 
 	/*
