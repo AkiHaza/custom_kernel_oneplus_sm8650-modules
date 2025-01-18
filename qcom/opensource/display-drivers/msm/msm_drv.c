@@ -2425,12 +2425,19 @@ static struct platform_driver msm_platform_driver = {
 	},
 };
 
+#include "sde_fence.h"
+
 static int __init msm_drm_register(void)
 {
+	int ret;
+
 	if (!modeset)
 		return -EINVAL;
 
 	DBG("init");
+	ret = sde_kmem_pool_init();
+	if (ret)
+		return ret;
 	sde_rsc_rpmh_register();
 	sde_rsc_register();
 	msm_smmu_driver_init();
@@ -2466,6 +2473,7 @@ static void __exit msm_drm_unregister(void)
 	bl_ic_ktz8866_exit();
 #endif
 	platform_driver_unregister(&msm_platform_driver);
+	sde_kmem_pool_exit();
 }
 
 module_init(msm_drm_register);
