@@ -49,14 +49,6 @@ int oplus_panel_video_mode_aod_off_cmd_switch(struct dsi_panel *panel, enum dsi_
 int oplus_panel_cmd_switch(struct dsi_panel *panel, enum dsi_cmd_set_type *type);
 
 /**
- * oplus_ctrl_print_cmd_desc() - oplus command desc printf
- * @dsi_ctrl: Dsi ctrl
- * @cmd: Dsi command set
- * Return: void
- */
-void oplus_ctrl_print_cmd_desc(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd);
-
-/**
  * oplus_panel_event_data_notifier_trigger() - oplus panel event notification with data
  * @panel:         Display panel
  * @notif_type:    Type of notifier
