@@ -96,7 +96,43 @@
 
 #include <linux/wait.h>
 
+struct fp_error_event {
+	unsigned char error_code;
+	ktime_t timestamp;
+	unsigned int extra_info;
+};
+
 static DECLARE_WAIT_QUEUE_HEAD(state_waiter);
+
+static const char * const fp_error_map[] = {
+	[FINGERPRINT_AREA_NOT_MATCH] = "fingerprint_area_not_match_count",
+	[ANOTHER_FINGER_ON_NON_FP_ZONE] = "another_finger_on_non-fingerprint_zone_count",
+	[FINGERPRINT_DOWN_BEFORE_FP_ENABLE] = "fingerprint_down_before_fp_enable_count",
+	[FINGERPRINT_OUT_MOVE_IN] = "fingerprint_out_move_in_count",
+};
+
+static void syna_fp_error_report_work(struct work_struct *work)
+{
+	struct syna_tcm *tcm = container_of(work, struct syna_tcm, fp_error_work);
+	unsigned char error_code;
+
+	if (!tcm || !tcm->health_monitor_support)
+		return;
+
+	error_code = READ_ONCE(tcm->fp_error_code);
+
+	if (error_code >= ARRAY_SIZE(fp_error_map) || !fp_error_map[error_code]) {
+		LOGW("TP_FP_ERROR_REPORT: unknown fingerprint error type: 0x%x\n", error_code);
+		return;
+	}
+
+	tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, (void *)fp_error_map[error_code]);
+	LOGI("TP_FP_ERROR_REPORT: deferred report for error 0x%x\n", error_code);
+
+	if (error_code == ANOTHER_FINGER_ON_NON_FP_ZONE) {
+		LOGI("TP_FP_ERROR_REPORT: extra info (coordinates): 0x%x\n", READ_ONCE(tcm->fp_error_extra_info));
+	}
+}
 
 extern struct platform_device *syna_spi_device;
 /**
@@ -212,7 +248,7 @@ void touch_call_notifier_fp(struct syna_tcm *tcm, struct fp_underscreen_info *fp
 				for (i = 0; i < ARRAY_SIZE(timing_buckets); i++) {
 					if (delta_time > 0 && delta_time <= timing_buckets[i].threshold) {
 						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT,
-							timing_buckets[i].metric);
+							(void *)timing_buckets[i].metric);
 						break;
 					}
 				}
@@ -750,6 +786,7 @@ static void syna_dev_report_input_events(struct syna_tcm *tcm)
 	struct tcm_touch_data_blob *touch_data;
 	struct tcm_objects_data_blob *object_data;
 	struct fp_underscreen_info fp_info;
+	unsigned char error_code;
 
 	if (input_dev == NULL)
 		return;
@@ -865,38 +902,17 @@ static void syna_dev_report_input_events(struct syna_tcm *tcm)
 				tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "screen_off_fp_up");
 			} else if (touch_data->gesture_id == FINGERPRINT_ERR_REPORT) {
 				LOGI("TP_FP_ERROR_REPORT:fingerprint error type:[%*ph]\n", 6, touch_data->extra_gesture_info);
-				switch (touch_data->extra_gesture_info[0]) {
-				case FINGERPRINT_AREA_NOT_MATCH:
-					if (tcm->health_monitor_support) {
-						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_area_not_match_count");
-					}
-					LOGI("TP_FP_ERROR_REPORT:area size: 0x%x\n", touch_data->extra_gesture_info[2]);
-					LOGI("TP_FP_ERROR_REPORT:FINGERPRINT_AREA_NOT_MATCH\n");
-					break;
-				case ANOTHER_FINGER_ON_NON_FP_ZONE:
-					if (tcm->health_monitor_support) {
-						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "another_finger_on_non-fingerprint_zone_count");
-					}
-					LOGI("TP_FP_ERROR_REPORT:x:0x%x,y:0x%x\n", (touch_data->extra_gesture_info[3] << 8) + touch_data->extra_gesture_info[2],
-						(touch_data->extra_gesture_info[5] << 8) + touch_data->extra_gesture_info[4]);
-					LOGI("TP_FP_ERROR_REPORT:ANOTHER_FINGER_ON_NON_FP_ZONE\n");
-					break;
-				case FINGERPRINT_DOWN_BEFORE_FP_ENABLE:
-					if (tcm->health_monitor_support) {
-						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_down_before_fp_enable_count");
-					}
-					LOGI("TP_FP_ERROR_REPORT:down time: 0x%x\n", touch_data->extra_gesture_info[2]);
-					LOGI("TP_FP_ERROR_REPORT:FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
-					break;
-				case FINGERPRINT_OUT_MOVE_IN:
-					if (tcm->health_monitor_support) {
-						tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_out_move_in_count");
-					}
-					LOGI("TP_FP_ERROR_REPORT:FINGERPRINT_OUT_MOVE_IN\n");
-					break;
-				default:
-					LOGI("TP_FP_ERROR_REPORT:unknown fingerprint error type: 0x%x\n", touch_data->extra_gesture_info[0]);
-					break;
+				if (tcm->fp_error_wq) {
+					error_code = touch_data->extra_gesture_info[0];
+
+					WRITE_ONCE(tcm->fp_error_code, error_code);
+					tcm->fp_error_timestamp = ktime_get();
+					WRITE_ONCE(tcm->fp_error_extra_info,
+						(touch_data->extra_gesture_info[3] << 8) +
+						touch_data->extra_gesture_info[2]);
+
+					queue_work(tcm->fp_error_wq, &tcm->fp_error_work);
+					LOGI("TP_FP_ERROR_REPORT: queued error 0x%x for deferred reporting\n", error_code);
 				}
 			} else if (touch_data->gesture_id == UNDER_WATER) {
 				if(!tcm->under_water){
@@ -3722,6 +3738,12 @@ static int syna_dev_probe(struct platform_device *pdev)
 
 	hrtimer_init(&tcm->insert_timestamp_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	tcm->insert_timestamp_timer.function = set_insert_timestamp;
+
+	INIT_WORK(&tcm->fp_error_work, syna_fp_error_report_work);
+	tcm->fp_error_wq = create_workqueue("syna_fp_error_wq");
+	if (!tcm->fp_error_wq)
+		LOGE("Failed to create fingerprint error workqueue\n");
+
 	/* syna_tcm_enable_predict_reading */
 	syna_tcm_enable_predict_reading(tcm->tcm_dev, true);
 
@@ -3797,6 +3819,13 @@ static int syna_dev_remove(struct platform_device *pdev)
 	/* check the connection status, and do disconnection */
 	if (tcm->dev_disconnect(tcm) < 0)
 		LOGE("Fail to do device disconnection\n");
+
+	if (tcm->fp_error_wq) {
+		flush_workqueue(tcm->fp_error_wq);
+		destroy_workqueue(tcm->fp_error_wq);
+		tcm->fp_error_wq = NULL;
+	}
+
 
 	mutex_unlock(&tcm->mutex);
 	/*step7 : suspend && resume fuction register*/
