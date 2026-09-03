@@ -67,6 +67,6 @@ int get_fp_driver_evt_type(void);
 int send_fingerprint_msg(int module, int event, void *data,
                              unsigned int size);
 int wait_fp_event(void *data, unsigned int size,
-                           struct fingerprint_message_t **msg);
+                           struct fingerprint_message_t *msg);
 void reset_fingerprint_msg(void);
 #endif //FINGERPRINT_EVENT_H

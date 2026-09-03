@@ -775,7 +775,7 @@ static int fp_release(struct inode *inode, struct file *filp) {
 
 ssize_t fp_read(struct file * f, char __user *buf, size_t count, loff_t *offset)
 {
-    struct fingerprint_message_t *rcv_msg = NULL;
+    struct fingerprint_message_t rcv_msg;
     pr_info("gf_read enter");
     if (buf == NULL || f == NULL || count != sizeof(struct fingerprint_message_t)) {
         return 0;
@@ -784,10 +784,7 @@ ssize_t fp_read(struct file * f, char __user *buf, size_t count, loff_t *offset)
     if (wait_fp_event(NULL, 0, &rcv_msg)) {
         return -2;
     }
-    if (rcv_msg == NULL) {
-        return -3;
-    }
-    if (copy_to_user(buf, rcv_msg, count)) {
+    if (copy_to_user(buf, &rcv_msg, count)) {
         return -EFAULT;
     }
     pr_info("end wait for driver event");
