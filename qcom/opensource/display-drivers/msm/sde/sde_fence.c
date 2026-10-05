@@ -5,6 +5,7 @@
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
+#include <linux/module.h>
 #include <linux/sync_file.h>
 #include <linux/dma-fence.h>
 #include <linux/dma-fence-array.h>
@@ -907,6 +908,7 @@ static void sde_fence_release(struct dma_fence *fence)
 
 		kref_put(&f->ctx->kref, sde_fence_destroy);
 		kmem_cache_free(kmem_fence_pool, f);
+		module_put(THIS_MODULE);
 	}
 }
 
@@ -959,9 +961,15 @@ static int _sde_fence_create_fd(void *fence_ctx, uint32_t val, struct sde_hw_ctl
 		goto exit;
 	}
 
+	/* A sync_file may outlive the DRM device and its file handles. */
+	if (!try_module_get(THIS_MODULE))
+		return -ENODEV;
+
 	sde_fence = kmem_cache_zalloc(kmem_fence_pool, GFP_KERNEL);
-	if (!sde_fence)
+	if (!sde_fence) {
+		module_put(THIS_MODULE);
 		return -ENOMEM;
+	}
 
 	sde_fence->ctx = fence_ctx;
 	dma_fence_init(&sde_fence->base, &sde_fence_ops, &ctx->lock,

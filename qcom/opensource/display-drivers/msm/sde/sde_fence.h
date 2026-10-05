@@ -141,8 +141,19 @@ struct sde_hw_fence_data {
 	struct sde_hw_fence_error_cb_data sde_hw_fence_error_cb_data;
 };
 
+#if IS_ENABLED(CONFIG_DRM_MSM_SDE)
 int sde_kmem_pool_init(void);
 void sde_kmem_pool_exit(void);
+#else
+static inline int sde_kmem_pool_init(void)
+{
+	return 0;
+}
+
+static inline void sde_kmem_pool_exit(void)
+{
+}
+#endif
 
 #if IS_ENABLED(CONFIG_SYNC_FILE)
 /**
